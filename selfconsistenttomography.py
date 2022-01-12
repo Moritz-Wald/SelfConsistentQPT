@@ -4,7 +4,7 @@ from time import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-from qiskit import QuantumCircuit, assemble, Aer
+from qiskit import QuantumCircuit, Aer
 from qiskit.providers.aer.noise import NoiseModel
 from qiskit.quantum_info import PTM
 
@@ -16,7 +16,6 @@ def self_consistent_tomography(circ: QuantumCircuit,
                                shots: int,
                                noise_model: Optional[NoiseModel] = None,
                                backend:  Optional[str] = 'qasm_simulator',
-                               linearizeError: Optional[bool] = False,
                                visualize: Optional[bool] = False,
                                runtime: Optional[bool] = False
                                ) -> Dict[str, PTM]:
@@ -50,10 +49,6 @@ def self_consistent_tomography(circ: QuantumCircuit,
         reconstructed for each label in Liouville-Pauli (PTM) representation.
     """
 
-    #  TODO: Add linearized lstsq function
-    if linearizeError:
-        raise ValueError("Linearized gate error not yet implemented!")
-
     # load the execution backend
     execbackend = Aer.get_backend(backend)
 
@@ -64,9 +59,6 @@ def self_consistent_tomography(circ: QuantumCircuit,
         # print("There are {} circuits being executed on the gate "
         #       "set {}.".format(len(scqpt_circuits), gateset))
         print("Time taken for circuit generation: {:0.3f}".format(time()-t1))
-
-    # assemble qobj for execution on execbackend
-    qobj = assemble(scqpt_circuits, shots=shots)
 
     # run the circuits as an experiment on execbackend and store results
     t2 = time()

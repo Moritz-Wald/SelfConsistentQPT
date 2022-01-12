@@ -5,13 +5,17 @@ least squares estimation fitter for self consistent quantum process tomography
 import itertools
 import numpy as np
 from scipy.optimize import minimize
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Union
 
 # qiskit imports
 from qiskit.ignis.verification.tomography.fitters import TomographyFitter
 from qiskit.ignis.verification.tomography.fitters.gateset_fitter import get_cholesky_like_decomposition
 from qiskit.result import Result
 from qiskit.quantum_info import Choi, PTM
+
+from scqptbasis import default_scqpt_basis
+import itertools as it
+import matplotlib.pyplot as plt
 
 
 class SelfConsistentProcessTomographyFitter:
@@ -36,8 +40,40 @@ class SelfConsistentProcessTomographyFitter:
         for key, vals in self._data.items():
             self.probs[key] = vals.get('0', 0) / sum(vals.values())
 
+        # set number of qubits at hand
+        self.qubits = 1
+
     def data(self):
         return self._data.items()
+
+    def linear_inversion(self):
+        """
+        linear inversion routine to obtain starting point for slstsq
+        optimisation
+
+        :return: linearly inverted gate set from the data
+        """
+        n = len(default_scqpt_basis().labels)
+        m = len(self.gateset.keys())
+
+        gram_matrix = np.zeros((n, n))
+        gate_matrices = []
+        for i in range(m):
+            gate_matrices.append(np.zeros((n, n)))
+
+        for i, gi in enumerate(default_scqpt_basis().labels):  # row
+            for j, gj in enumerate(default_scqpt_basis().labels):  # column
+                gram_matrix[i][j] = self.probs[(gj, 'Id', gi)]
+
+                for k, gk in enumerate(self.gateset.keys()):  # gate
+                    gate_matrices[k][i][j] = self.probs[(gj, gk, gi)]
+
+        gram_inverse = np.linalg.inv(gram_matrix)
+
+        gates = [PTM(np.matmul(gram_inverse, gate_matrix))
+                 for gate_matrix in gate_matrices]
+        result = dict(zip(self.gateset.keys(), gates))
+        return result
 
     def fit(self):
         """
@@ -48,10 +84,23 @@ class SelfConsistentProcessTomographyFitter:
         :return: the set of Gates in the gate set to optimize in PTM
             representation
         """
+        # _linear_inversion_result = self.linear_inversion()
+        #
+        # idealPTMs = [g.data for g in self.gateset.values()]
+        # expPTMs = [g.data for g in _linear_inversion_result.values()]
+        #
+        # for i, gate in enumerate(self.gateset.keys()):
+        #     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        #     plot_pauli_transfer_matrix(idealPTMs[i], ax1,
+        #                                title='Ideal of {}'.format(gate))
+        #     plot_pauli_transfer_matrix(expPTMs[i], ax2,
+        #                                title='Estimate of {}'.format(gate))
+        #     plt.show()
+
         optimizer = ScqptLeastSquaresOptimizer(self.probs, self.gateset)
 
         optimizer.set_initial_value(self.gateset)
-        optimization_results = optimizer.optimize(self.gateset)
+        optimization_results = optimizer.optimize()
         return optimization_results
 
 
@@ -86,14 +135,14 @@ class ScqptLeastSquaresOptimizer:
         # Data for objective function of form list{Tuple(Triple[str], float)}
         self.obj_fn_data = self._compute_objective_function_data()
 
-        self.initial_value = None
+        self._initial_value = None
 
         # set number of qubits at hand
         self.qubits = 1
 
     def _compute_objective_function_data(self) -> List:
         """
-        THIS IS ADAPTED FROM QISKIT API.
+        THIS IS ADAPTED FROM QISKIT SDK.
         Prepares the data that is needed for the generation of the goal function
         so that calculation in the optimizer is quick and doesnt have to
         recalculate non-changing information.
@@ -111,7 +160,7 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _complex_matrix_to_vec(M):
         """
-        THIS IS TAKEN FROM QISKIT API.
+        THIS IS TAKEN FROM QISKIT SDK.
         Turn a complex matrix into its vectorised representation. First come the
         real parts and afterwards the imaginary parts in the vector.
 
@@ -124,7 +173,7 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _vec_to_complex_matrix(vec: np.array) -> np.array:
         """
-        THIS IS TAKEN FROM QISKIT API.
+        THIS IS TAKEN FROM QISKIT SDK.
         Turn a vector with real entries into a complex matrix. First come the
         real parts and afterwards the imaginary parts.
 
@@ -142,7 +191,7 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _split_list(input_list: List, sizes: List) -> List[List]:
         """
-        THIS IS TAKEN FROM QISKIT API.
+        THIS IS TAKEN FROM QISKIT SDK.
         Splits a list to several lists of given size
         Args:
             input_list: A list
@@ -342,11 +391,13 @@ class ScqptLeastSquaresOptimizer:
         # make list of gates of type PTM
         gates = [initial_value[label] for label in self.gateset.keys()]
         # save vector of parameterization as initial value for optimizer
-        self.initial_value = self._join_input_vector(gates)
+        self._initial_value = self._join_input_vector(gates)
 
-    def optimize(self, initial_set: Optional[Dict[str, PTM]] = None) -> Dict:
+    # noinspection PyTypeChecker
+    def optimize(self,
+                 initial_set: Optional[Dict[str, PTM]] = None) -> Dict:
         """
-        THIS IS ADAPTED FROM QISKIT API.
+        THIS IS ADAPTED FROM QISKIT SDK.
         Execute the minimisation of the least squares likelihood functional
 
         :param initial_set: The Dict of the gateset the initial value vector
@@ -359,9 +410,53 @@ class ScqptLeastSquaresOptimizer:
             self.set_initial_value(initial_set)
 
         # minimize the log likelihood function L(G)
-        results = minimize(self._log_likelihood_func, self.initial_value,
-                           method='SLSQP')
+        results = minimize(self._log_likelihood_func, self._initial_value,
+                           constraints=self._constraints(), method='SLSQP')
         # refactor to gate PTMs
         resultgates = self._split_input_vector(results.x)
 
         return resultgates
+
+
+def plot_pauli_transfer_matrix(ptransfermatrix: np.ndarray,
+                               ax,
+                               labels=None, title='',
+                               fontsizes: int = 16):
+    """
+    Visualize a quantum process using the Pauli-Liouville representation (aka
+    the Pauli Transfer Matrix) of the process.
+
+    :param ptransfermatrix: The Pauli Transfer Matrix
+    :param ax: The matplotlib axes.
+    :param labels: The labels for the operator basis states.
+    :param title: The title for the plot
+    :param fontsizes: Font size for axis labels
+    :return: The modified axis object.
+    :rtype: AxesSubplot
+    """
+    ptransfermatrix = np.real_if_close(ptransfermatrix)
+    im = ax.imshow(ptransfermatrix, interpolation="nearest", cmap="RdBu",
+                   vmin=-1, vmax=1)
+    if labels is None:
+        dim_squared = ptransfermatrix.shape[0]
+        num_qubits = np.int64(np.log2(np.sqrt(dim_squared)))
+        labels = [''.join(x) for x in it.product('IXYZ', repeat=num_qubits)]
+    else:
+        dim_squared = len(labels)
+
+    cb = plt.colorbar(im, ax=ax, ticks=[-1, -3 / 4, -1 / 2, -1 / 4, 0, 1 / 4,
+                                        1 / 2, 3 / 4, 1])
+    ticklabs = cb.ax.get_yticklabels()
+    cb.ax.set_yticklabels(ticklabs, ha='right')
+    cb.ax.yaxis.set_tick_params(pad=35)
+    cb.draw_all()
+    ax.set_xticks(range(dim_squared))
+    ax.set_xlabel("Input Pauli Operator", fontsize=fontsizes)
+    ax.set_yticks(range(dim_squared))
+    ax.set_ylabel("Output Pauli Operator", fontsize=fontsizes)
+    ax.set_title(title, fontsize=int(np.floor(1.2 * fontsizes)), pad=15)
+    ax.set_xticklabels(labels, rotation=45,
+                       fontsize=int(np.floor(0.7 * fontsizes)))
+    ax.set_yticklabels(labels, fontsize=int(np.floor(0.7 * fontsizes)))
+    ax.grid(False)
+    return ax
