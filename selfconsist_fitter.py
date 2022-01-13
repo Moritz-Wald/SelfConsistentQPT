@@ -2,10 +2,9 @@
 least squares estimation fitter for self consistent quantum process tomography
 """
 # python and utility imports
-import itertools
 import numpy as np
 from scipy.optimize import minimize
-from typing import List, Tuple, Optional, Dict, Union
+from typing import List, Tuple, Optional, Dict
 
 # qiskit imports
 from qiskit.ignis.verification.tomography.fitters import TomographyFitter
@@ -16,6 +15,53 @@ from qiskit.quantum_info import Choi, PTM
 from scqptbasis import default_scqpt_basis
 import itertools as it
 import matplotlib.pyplot as plt
+
+
+# taken from forest.benchmarking
+# https://github.com/rigetti/forest-benchmarking/blob/master/forest/...
+# ...benchmarking/plotting/state_process.py
+def plot_pauli_transfer_matrix(ptransfermatrix: np.ndarray,
+                               ax,
+                               labels=None, title='',
+                               fontsizes: int = 16):
+    """
+    Visualize a quantum process using the Pauli-Liouville representation (aka
+    the Pauli Transfer Matrix) of the process.
+
+    :param ptransfermatrix: The Pauli Transfer Matrix
+    :param ax: The matplotlib axes.
+    :param labels: The labels for the operator basis states.
+    :param title: The title for the plot
+    :param fontsizes: Font size for axis labels
+    :return: The modified axis object.
+    :rtype: AxesSubplot
+    """
+    ptransfermatrix = np.real_if_close(ptransfermatrix)
+    im = ax.imshow(ptransfermatrix, interpolation="nearest", cmap="RdBu",
+                   vmin=-1, vmax=1)
+    if labels is None:
+        dim_squared = ptransfermatrix.shape[0]
+        num_qubits = np.int64(np.log2(np.sqrt(dim_squared)))
+        labels = [''.join(x) for x in it.product('IXYZ', repeat=num_qubits)]
+    else:
+        dim_squared = len(labels)
+
+    cb = plt.colorbar(im, ax=ax, ticks=[-1, -3 / 4, -1 / 2, -1 / 4, 0, 1 / 4,
+                                        1 / 2, 3 / 4, 1])
+    ticklabs = cb.ax.get_yticklabels()
+    cb.ax.set_yticklabels(ticklabs, ha='right')
+    cb.ax.yaxis.set_tick_params(pad=35)
+    cb.draw_all()
+    ax.set_xticks(range(dim_squared))
+    ax.set_xlabel("Input Pauli Operator", fontsize=fontsizes)
+    ax.set_yticks(range(dim_squared))
+    ax.set_ylabel("Output Pauli Operator", fontsize=fontsizes)
+    ax.set_title(title, fontsize=int(np.floor(1.2 * fontsizes)), pad=15)
+    ax.set_xticklabels(labels, rotation=45,
+                       fontsize=int(np.floor(0.7 * fontsizes)))
+    ax.set_yticklabels(labels, fontsize=int(np.floor(0.7 * fontsizes)))
+    ax.grid(False)
+    return ax
 
 
 class SelfConsistentProcessTomographyFitter:
@@ -84,8 +130,8 @@ class SelfConsistentProcessTomographyFitter:
         :return: the set of Gates in the gate set to optimize in PTM
             representation
         """
-        # _linear_inversion_result = self.linear_inversion()
-        #
+        _linear_inversion_result = self.linear_inversion()
+
         # idealPTMs = [g.data for g in self.gateset.values()]
         # expPTMs = [g.data for g in _linear_inversion_result.values()]
         #
@@ -99,8 +145,7 @@ class SelfConsistentProcessTomographyFitter:
 
         optimizer = ScqptLeastSquaresOptimizer(self.probs, self.gateset)
 
-        optimizer.set_initial_value(self.gateset)
-        optimization_results = optimizer.optimize()
+        optimization_results = optimizer.optimize(_linear_inversion_result)
         return optimization_results
 
 
@@ -132,30 +177,19 @@ class ScqptLeastSquaresOptimizer:
         # Probs of the form dict{Triple[str]: float}
         self.probs = probabilities
 
-        # Data for objective function of form list{Tuple(Triple[str], float)}
-        self.obj_fn_data = self._compute_objective_function_data()
-
+        # the initial set of gates to start optimisation from
         self._initial_value = None
 
         # set number of qubits at hand
         self.qubits = 1
 
-    def _compute_objective_function_data(self) -> List:
-        """
-        THIS IS ADAPTED FROM QISKIT SDK.
-        Prepares the data that is needed for the generation of the goal function
-        so that calculation in the optimizer is quick and doesnt have to
-        recalculate non-changing information.
-        Generate every possible combination of Gates as a 3 length product and
-        store the corresponding probability p_ijk with it as a tuple
-        ((i,j,k), p_ijk).
-
-        :return: Data tuples needed for the calculation of the goal function
-        """
-        combinations = list(itertools.product(
-            list(self.gateset.keys()), repeat=3))
-        obj_fn_data = list(zip(combinations, list(self.probs.values())))
-        return obj_fn_data
+        # sets list of constraint dicts
+        # Each constraint is a dictionary containing
+        # type ('eq' for equality == 0, 'ineq' for inequality >= 0)
+        # and a function generating from the input x the values
+        # that are being constrained.
+        self._constraints = [{'type': 'eq', 'fun': self._bounds_eq_constraint},
+                             {'type': 'ineq', 'fun': self._bounds_ineq_constraint}]
 
     @staticmethod
     def _complex_matrix_to_vec(M):
@@ -278,7 +312,7 @@ class ScqptLeastSquaresOptimizer:
         current_gateset = self._split_input_vector(x)
         result = 0.
         # for all measurements
-        for meas in self.obj_fn_data:
+        for meas in list(self.probs.items()):
             # initialise ground state
             value = self.rho
             # add all 3 gates to it
@@ -324,12 +358,12 @@ class ScqptLeastSquaresOptimizer:
             bounds_eq.append(ptm_matrix[i] - 1)  # G^k_{0,0} is 1
             i += 1
             for _ in range(ds - 1):
-                bounds_eq.append(ptm_matrix[i] - 0)  # G^k_{0,i} is 0
+                bounds_eq.append(ptm_matrix[i])  # G^k_{0,i} is 0
                 i += 1
             for _ in range((ds - 1) * ds):  # rest of G^k
                 i += 1
             for _ in range(ds ** 2):  # the complex part of G^k
-                bounds_eq.append(ptm_matrix[i] - 0)  # G^k_{0,i} is 0
+                # bounds_eq.append(ptm_matrix[i])  # G^k_{i,i} is 0
                 i += 1
         return bounds_eq
 
@@ -368,23 +402,10 @@ class ScqptLeastSquaresOptimizer:
                 i += 1
         return bounds_ineq
 
-    def _constraints(self) -> List[Dict]:
-        """Generates the constraints for the MLE optimization
-        Returns:
-            A list of constraints.
-        Additional information:
-            Each constraint is a dictionary containing
-            type ('eq' for equality == 0, 'ineq' for inequality >= 0)
-            and a function generating from the input x the values
-            that are being constrained.
-        """
-        cons = [{'type': 'eq', 'fun': self._bounds_eq_constraint},
-                {'type': 'ineq', 'fun': self._bounds_ineq_constraint}]
-        return cons
-
-    def set_initial_value(self, initial_value):
+    def _set_initial_value(self, initial_value):
         """
         Sets the initial value for the optimizer using a set of gates.
+
         :param initial_value: The Dict of the gateset the initial value vector
             should be based on
         """
@@ -407,56 +428,12 @@ class ScqptLeastSquaresOptimizer:
         """
         # in case there is a initial set passed as starting point, initialise it
         if initial_set is not None:
-            self.set_initial_value(initial_set)
+            self._set_initial_value(initial_set)
+        else:
+            self._set_initial_value(self.gateset)
 
         # minimize the log likelihood function L(G)
         results = minimize(self._log_likelihood_func, self._initial_value,
-                           constraints=self._constraints(), method='SLSQP')
-        # refactor to gate PTMs
-        resultgates = self._split_input_vector(results.x)
+                           constraints=self._constraints, method='SLSQP')
 
-        return resultgates
-
-
-def plot_pauli_transfer_matrix(ptransfermatrix: np.ndarray,
-                               ax,
-                               labels=None, title='',
-                               fontsizes: int = 16):
-    """
-    Visualize a quantum process using the Pauli-Liouville representation (aka
-    the Pauli Transfer Matrix) of the process.
-
-    :param ptransfermatrix: The Pauli Transfer Matrix
-    :param ax: The matplotlib axes.
-    :param labels: The labels for the operator basis states.
-    :param title: The title for the plot
-    :param fontsizes: Font size for axis labels
-    :return: The modified axis object.
-    :rtype: AxesSubplot
-    """
-    ptransfermatrix = np.real_if_close(ptransfermatrix)
-    im = ax.imshow(ptransfermatrix, interpolation="nearest", cmap="RdBu",
-                   vmin=-1, vmax=1)
-    if labels is None:
-        dim_squared = ptransfermatrix.shape[0]
-        num_qubits = np.int64(np.log2(np.sqrt(dim_squared)))
-        labels = [''.join(x) for x in it.product('IXYZ', repeat=num_qubits)]
-    else:
-        dim_squared = len(labels)
-
-    cb = plt.colorbar(im, ax=ax, ticks=[-1, -3 / 4, -1 / 2, -1 / 4, 0, 1 / 4,
-                                        1 / 2, 3 / 4, 1])
-    ticklabs = cb.ax.get_yticklabels()
-    cb.ax.set_yticklabels(ticklabs, ha='right')
-    cb.ax.yaxis.set_tick_params(pad=35)
-    cb.draw_all()
-    ax.set_xticks(range(dim_squared))
-    ax.set_xlabel("Input Pauli Operator", fontsize=fontsizes)
-    ax.set_yticks(range(dim_squared))
-    ax.set_ylabel("Output Pauli Operator", fontsize=fontsizes)
-    ax.set_title(title, fontsize=int(np.floor(1.2 * fontsizes)), pad=15)
-    ax.set_xticklabels(labels, rotation=45,
-                       fontsize=int(np.floor(0.7 * fontsizes)))
-    ax.set_yticklabels(labels, fontsize=int(np.floor(0.7 * fontsizes)))
-    ax.grid(False)
-    return ax
+        return self._split_input_vector(results.x)

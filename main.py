@@ -35,7 +35,7 @@ print("----------QPT----------")
 qpt_circs = process_tomography_circuits(circ, q)
 # noinspection PyTypeChecker
 execute = qiskit.execute(qpt_circs, qiskit.Aer.get_backend(backend), shots=shots,
-                         noise_model=None)
+                         noise_model=noise_model)
 qpt_tomo = ProcessTomographyFitter(execute.result(), qpt_circs)
 choi_fit_lstsq = qpt_tomo.fit(method='lstsq')
 print('Average gate fidelity: F = {:.10f}'
@@ -49,7 +49,7 @@ print('Process fidelity: F = {:.10f}'
 print("----------SCQPT----------")
 PTMs = self_consistent_tomography(circ,
                                   shots,
-                                  noise_model=None,
+                                  noise_model=noise_model,
                                   backend=backend,
                                   visualize=True,
                                   runtime=True)

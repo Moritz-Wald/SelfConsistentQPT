@@ -1,15 +1,14 @@
-import itertools as it
 from typing import Optional, Dict
 from time import time
 
 import matplotlib.pyplot as plt
-import numpy as np
 from qiskit import QuantumCircuit, Aer
 from qiskit.providers.aer.noise import NoiseModel
 from qiskit.quantum_info import PTM
 
 from selfconsist_circuits import sc_process_tomography_circuits
 from selfconsist_fitter import SelfConsistentProcessTomographyFitter
+from selfconsist_fitter import plot_pauli_transfer_matrix
 
 
 def self_consistent_tomography(circ: QuantumCircuit,
@@ -36,9 +35,6 @@ def self_consistent_tomography(circ: QuantumCircuit,
     :param backend: (default: 'qasm_simulator') The backend to execute the
         different circuits on. This is the explizit description of the system
         at hand.
-    :param linearizeError: (default: False) If 'True', reconstructs the gateset
-        using the linearized least squares function proposed by S. Merkel et al.
-        in eq. 29 of arXiv:1211.0322 instead of the non linearized in eq. 26.
     :param visualize: (default: False) If 'True', visualises the Pauli transfer
         matrix representation of the ideal and reconstructed gates side by side
         for each gate in the gate set to be tomographized.
@@ -56,8 +52,7 @@ def self_consistent_tomography(circ: QuantumCircuit,
     t1 = time()
     scqpt_circuits, gateset = sc_process_tomography_circuits(circ)
     if runtime:
-        # print("There are {} circuits being executed on the gate "
-        #       "set {}.".format(len(scqpt_circuits), gateset))
+        print("Gateset is: {}".format(gateset.keys()))
         print("Time taken for circuit generation: {:0.3f}".format(time()-t1))
 
     # run the circuits as an experiment on execbackend and store results
@@ -92,50 +87,3 @@ def self_consistent_tomography(circ: QuantumCircuit,
             plt.show()
 
     return resultPTMs
-
-
-# taken from forest.benchmarking
-# https://github.com/rigetti/forest-benchmarking/blob/master/forest/...
-# ...benchmarking/plotting/state_process.py
-def plot_pauli_transfer_matrix(ptransfermatrix: np.ndarray,
-                               ax,
-                               labels=None, title='',
-                               fontsizes: int = 16):
-    """
-    Visualize a quantum process using the Pauli-Liouville representation (aka
-    the Pauli Transfer Matrix) of the process.
-
-    :param ptransfermatrix: The Pauli Transfer Matrix
-    :param ax: The matplotlib axes.
-    :param labels: The labels for the operator basis states.
-    :param title: The title for the plot
-    :param fontsizes: Font size for axis labels
-    :return: The modified axis object.
-    :rtype: AxesSubplot
-    """
-    ptransfermatrix = np.real_if_close(ptransfermatrix)
-    im = ax.imshow(ptransfermatrix, interpolation="nearest", cmap="RdBu",
-                   vmin=-1, vmax=1)
-    if labels is None:
-        dim_squared = ptransfermatrix.shape[0]
-        num_qubits = np.int64(np.log2(np.sqrt(dim_squared)))
-        labels = [''.join(x) for x in it.product('IXYZ', repeat=num_qubits)]
-    else:
-        dim_squared = len(labels)
-
-    cb = plt.colorbar(im, ax=ax, ticks=[-1, -3 / 4, -1 / 2, -1 / 4, 0, 1 / 4,
-                                        1 / 2, 3 / 4, 1])
-    ticklabs = cb.ax.get_yticklabels()
-    cb.ax.set_yticklabels(ticklabs, ha='right')
-    cb.ax.yaxis.set_tick_params(pad=35)
-    cb.draw_all()
-    ax.set_xticks(range(dim_squared))
-    ax.set_xlabel("Input Pauli Operator", fontsize=fontsizes)
-    ax.set_yticks(range(dim_squared))
-    ax.set_ylabel("Output Pauli Operator", fontsize=fontsizes)
-    ax.set_title(title, fontsize=int(np.floor(1.2 * fontsizes)), pad=15)
-    ax.set_xticklabels(labels, rotation=45,
-                       fontsize=int(np.floor(0.7 * fontsizes)))
-    ax.set_yticklabels(labels, fontsize=int(np.floor(0.7 * fontsizes)))
-    ax.grid(False)
-    return ax

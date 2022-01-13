@@ -13,8 +13,11 @@ from scqptbasis import default_scqpt_basis, SelfConsistTomographyBasis
 
 def sc_process_tomography_circuits(circuit: QuantumCircuit,
                                    measured_qubits=None,
-                                   scqpt_basis: Union[str, SelfConsistTomographyBasis] = 'default'
-                                   ) -> Tuple[List[QuantumCircuit], Dict[str, Union[Any, Gate]]]:
+                                   scqpt_basis:
+                                   Union[str,
+                                         SelfConsistTomographyBasis] = 'default'
+                                   ) -> Tuple[List[QuantumCircuit],
+                                              Dict[str, Union[Any, Gate]]]:
     """
     Generate the circuits needed to obtain all data required for self consistent
     quantum process tomography. For a self consistent set of N gates G that at
@@ -57,7 +60,8 @@ def sc_process_tomography_circuits(circuit: QuantumCircuit,
         scqpt_basis.add_gate(gate[0])
 
     # generate all combinations of the keys in the Gateset
-    combinations = list(itertools.product(list(scqpt_basis.gates.keys()), repeat=3))
+    combinations = list(itertools.product(list(scqpt_basis.gates.keys()),
+                                          repeat=3))
 
     # generate a circuit for every combination and add it to all_circuits
     all_circuits = []
