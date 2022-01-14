@@ -17,7 +17,7 @@ circ = QuantumCircuit(q)
 
 '''Insert gate sequence here'''
 
-circ.x(q[0])
+circ.h(q[0])
 
 # Calculate the target operation
 target_operator = qi.Operator(circ)
@@ -26,7 +26,7 @@ target_ptm = qi.PTM(target_operator)
 
 noise_model = noise.NoiseModel()
 for qubit in range(1):
-    read_err = noise.errors.readout_error.ReadoutError([[0.75, 0.25],
+    read_err = noise.errors.readout_error.ReadoutError([[0.9, 0.1],
                                                         [0.1, 0.9]])
     noise_model.add_readout_error(read_err, [qubit])
 
@@ -56,8 +56,8 @@ PTMs = self_consistent_tomography(circ,
 
 # calculate the process and average gate fidelity of the measured Choi
 print('Average gate fidelity: F = {:.10f}'
-      .format(qi.average_gate_fidelity(PTMs['x'],
+      .format(qi.average_gate_fidelity(PTMs['h'],
                                        target=target_operator)))
 print('Process fidelity: F = {:.10f}'
-      .format(qi.process_fidelity(PTMs['x'], target=target_ptm,
+      .format(qi.process_fidelity(PTMs['h'], target=target_ptm,
                                   require_tp=True, require_cp=True)))

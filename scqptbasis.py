@@ -7,7 +7,7 @@ from typing import Union, Callable, Optional, Dict
 # import qiskit classes
 from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.circuit import Gate
-from qiskit.circuit.library import RXGate, RYGate
+from qiskit.circuit.library import RXGate, RYGate, XGate
 from qiskit.quantum_info import PTM
 
 
@@ -95,6 +95,6 @@ def default_scqpt_basis():
         'Id': lambda circ, qubit: None,
         'X_Rot_90': lambda circ, qubit: circ.append(RXGate(np.pi/2), [qubit]),
         'Y_Rot_90': lambda circ, qubit: circ.append(RYGate(np.pi/2), [qubit]),
-        'X_Rot_180': lambda circ, qubit: circ.append(RXGate(np.pi), [qubit]),
+        'X_Rot_180': lambda circ, qubit: circ.append(XGate(), [qubit])
     }
     return SelfConsistTomographyBasis('DefaultSCQPT', gates)

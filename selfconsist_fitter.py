@@ -4,7 +4,7 @@ least squares estimation fitter for self consistent quantum process tomography
 # python and utility imports
 import numpy as np
 from scipy.optimize import minimize
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Union
 
 # qiskit imports
 from qiskit.ignis.verification.tomography.fitters import TomographyFitter
@@ -12,7 +12,7 @@ from qiskit.ignis.verification.tomography.fitters.gateset_fitter import get_chol
 from qiskit.result import Result
 from qiskit.quantum_info import Choi, PTM
 
-from scqptbasis import default_scqpt_basis
+from scqptbasis import default_scqpt_basis, SelfConsistTomographyBasis
 import itertools as it
 import matplotlib.pyplot as plt
 
@@ -81,16 +81,13 @@ class SelfConsistentProcessTomographyFitter:
         self.gateset = gateset
 
         # Add initial data
-        self._data = TomographyFitter(result, circuits).data
+        _data = TomographyFitter(result, circuits).data
         self.probs = {}
-        for key, vals in self._data.items():
-            self.probs[key] = vals.get('0', 0) / sum(vals.values())
+        for key, values in _data.items():
+            self.probs[key] = values.get('0', 0) / sum(values.values())
 
         # set number of qubits at hand
         self.qubits = 1
-
-    def data(self):
-        return self._data.items()
 
     def linear_inversion(self):
         """
@@ -116,8 +113,7 @@ class SelfConsistentProcessTomographyFitter:
 
         gram_inverse = np.linalg.inv(gram_matrix)
 
-        gates = [PTM(np.matmul(gram_inverse, gate_matrix))
-                 for gate_matrix in gate_matrices]
+        gates = [PTM(gram_inverse @ gate_matrix) for gate_matrix in gate_matrices]
         result = dict(zip(self.gateset.keys(), gates))
         return result
 
@@ -143,11 +139,56 @@ class SelfConsistentProcessTomographyFitter:
         #                                title='Estimate of {}'.format(gate))
         #     plt.show()
 
-        optimizer = ScqptLeastSquaresOptimizer(self.probs, self.gateset)
+        gauge_opt = GaugeOptimize(self.gateset,
+                                  _linear_inversion_result)
+        past_gauge_gateset = gauge_opt.optimize()
 
-        optimization_results = optimizer.optimize(_linear_inversion_result)
+        # expPTMs = [g.data for g in past_gauge_gateset.values()]
+        #
+        # for i, gate in enumerate(self.gateset.keys()):
+        #     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        #     plot_pauli_transfer_matrix(idealPTMs[i], ax1,
+        #                                title='Ideal of {}'.format(gate))
+        #     plot_pauli_transfer_matrix(expPTMs[i], ax2,
+        #                                title='Estimate of {}'.format(gate))
+        #     plt.show()
+
+        optimizer = ScqptLeastSquaresOptimizer(self.probs, self.gateset)
+        optimization_results = optimizer.optimize(past_gauge_gateset)
         return optimization_results
 
+class GaugeOptimize:
+    def __init__(self,
+                 ideal_gateset: Dict[str, PTM],
+                 initial_gateset: Dict[str, PTM],
+                 basis: Optional[SelfConsistTomographyBasis] = default_scqpt_basis()
+                 ):
+        # sets the basis used
+        self.ideal_gateset = ideal_gateset
+        self.initial_gateset = initial_gateset
+        self.Fs = [self.ideal_gateset[label].data
+                   for label in basis.gates.keys()]
+        self.d = np.shape(self.Fs[1])[0]
+        self.rho = np.array([[np.sqrt(0.5)], [0], [0], [np.sqrt(0.5)]])
+
+    def _x_to_gateset(self, x: np.array) -> Union[Dict[str, PTM], None]:
+        B = np.array(x).reshape((self.d, self.d))
+        BB = np.linalg.inv(B)
+        gateset = {label: PTM(BB @ self.initial_gateset[label].data @ B)
+                   for label in self.ideal_gateset.keys()}
+        return gateset
+
+    def _obj_fn(self, x: np.array) -> float:
+        gateset = self._x_to_gateset(x)
+        result = sum([np.linalg.norm(gateset[label].data -
+                                     self.ideal_gateset[label].data)
+                      for label in self.ideal_gateset.keys()])
+        return result
+
+    def optimize(self) -> dict[str, PTM]:
+        initial_value = np.array([(F @ self.rho).T[0] for F in self.Fs]).T
+        result = minimize(self._obj_fn, initial_value)
+        return self._x_to_gateset(result.x)
 
 class ScqptLeastSquaresOptimizer:
     """
@@ -194,7 +235,6 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _complex_matrix_to_vec(M):
         """
-        THIS IS TAKEN FROM QISKIT SDK.
         Turn a complex matrix into its vectorised representation. First come the
         real parts and afterwards the imaginary parts in the vector.
 
@@ -207,7 +247,6 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _vec_to_complex_matrix(vec: np.array) -> np.array:
         """
-        THIS IS TAKEN FROM QISKIT SDK.
         Turn a vector with real entries into a complex matrix. First come the
         real parts and afterwards the imaginary parts.
 
@@ -225,7 +264,6 @@ class ScqptLeastSquaresOptimizer:
     @staticmethod
     def _split_list(input_list: List, sizes: List) -> List[List]:
         """
-        THIS IS TAKEN FROM QISKIT SDK.
         Splits a list to several lists of given size
         Args:
             input_list: A list
@@ -251,7 +289,6 @@ class ScqptLeastSquaresOptimizer:
 
     def _join_input_vector(self, gates: List[PTM]) -> np.ndarray:
         """
-        THIS IS ADAPTED FROM QISKIT API.
         Generate value vector of parameterization for a set of gates
 
         :param gates: List of Gates to parameterize
@@ -270,7 +307,6 @@ class ScqptLeastSquaresOptimizer:
 
     def _split_input_vector(self, x: np.ndarray) -> Dict[str, PTM]:
         """
-        THIS IS ADAPTED FROM QISKIT API.
         Split the parameterization vector into lists corresponding to one gate
         operation and reconstruct the PTM for each gate
 
@@ -363,7 +399,7 @@ class ScqptLeastSquaresOptimizer:
             for _ in range((ds - 1) * ds):  # rest of G^k
                 i += 1
             for _ in range(ds ** 2):  # the complex part of G^k
-                # bounds_eq.append(ptm_matrix[i])  # G^k_{i,i} is 0
+                bounds_eq.append(ptm_matrix[i])  # G^k_{i,i} is 0
                 i += 1
         return bounds_eq
 
